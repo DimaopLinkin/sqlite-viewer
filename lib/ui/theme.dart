@@ -15,6 +15,7 @@ class ViewerColors extends ThemeExtension<ViewerColors> {
     required this.nullValue,
     required this.number,
     required this.input,
+    required this.dialog,
   });
 
   final Color sidebar;
@@ -29,6 +30,10 @@ class ViewerColors extends ThemeExtension<ViewerColors> {
   final Color number;
   final Color input;
 
+  /// Background of the row dialog, kept darker (lighter in the light theme)
+  /// than [input] so the value fields stand out.
+  final Color dialog;
+
   static const dark = ViewerColors(
     sidebar: Color(0xFF181818),
     toolbar: Color(0xFF1F1F1F),
@@ -40,7 +45,8 @@ class ViewerColors extends ThemeExtension<ViewerColors> {
     muted: Color(0xFF8B8B8B),
     nullValue: Color(0xFF6B6B6B),
     number: Color(0xFFB5CEA8),
-    input: Color(0xFF2A2A2A),
+    input: Color(0xFF2D2D2D),
+    dialog: Color(0xFF141414),
   );
 
   static const light = ViewerColors(
@@ -55,6 +61,7 @@ class ViewerColors extends ThemeExtension<ViewerColors> {
     nullValue: Color(0xFFA0A0A0),
     number: Color(0xFF098658),
     input: Color(0xFFFFFFFF),
+    dialog: Color(0xFFEBEBEB),
   );
 
   static ViewerColors of(BuildContext context) =>

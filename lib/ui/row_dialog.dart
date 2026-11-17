@@ -90,6 +90,8 @@ class _RowDialogState extends State<RowDialog> {
         const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): _next,
       },
       child: Dialog(
+        backgroundColor: colors.dialog,
+        surfaceTintColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(24),
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
