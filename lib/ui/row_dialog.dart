@@ -290,7 +290,7 @@ class _FieldState extends State<_Field> {
             suffixIcon: isNull
                 ? null
                 : CopyButton(
-                    text: () => _full,
+                    text: () => copyText(widget.value),
                     tooltip: 'Copy value',
                     size: 14,
                   ),

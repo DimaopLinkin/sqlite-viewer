@@ -8,6 +8,10 @@ abstract interface class DbSource {
   /// Display name, usually the file name.
   String get name;
 
+  /// Something the user should know about how the file was opened, or
+  /// `null`.
+  String? get notice;
+
   Future<List<TableInfo>> listTables();
 
   Future<Map<String, int?>> countRows(List<String> tables);

@@ -17,6 +17,9 @@ class _MemorySource implements DbSource {
   String get name => 'memory.sqlite';
 
   @override
+  String? get notice => null;
+
+  @override
   Future<List<TableInfo>> listTables() async => _reader.listTables();
 
   @override

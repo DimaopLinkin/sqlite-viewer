@@ -12,6 +12,8 @@ void main() {
     expect(formatCount(387200), '387K');
     expect(formatCount(1000), '1K');
     expect(formatCount(2500000), '2.5M');
+    expect(formatCount(999499), '999K');
+    expect(formatCount(999960), '1M');
   });
 
   test('cellText renders special values', () {
@@ -32,6 +34,13 @@ void main() {
     );
     expect(json, contains('"blob": "AQI="'));
     expect(json, contains('"big": "9007199254740993"'));
+    expect(rowToJson(['x'], [double.infinity]), contains('"Infinity"'));
+  });
+
+  test('copyText copies whole blobs', () {
+    final blob = Uint8List(100);
+    expect(fullText(blob), isNot(contains('more')));
+    expect(copyText(blob).split(RegExp(r'\s')).length, 100);
   });
 
   test('hexDump caps long blobs', () {

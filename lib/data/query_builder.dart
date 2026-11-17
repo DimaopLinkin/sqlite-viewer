@@ -129,7 +129,9 @@ abstract final class QueryBuilder {
     String value,
     num? n,
   ) {
-    if (n != null) return SqlStatement('$col $op ?', [n]);
+    // CAST makes numbers stored as text ('10', '9') compare as numbers too;
+    // a plain comparison would apply the column's TEXT affinity.
+    if (n != null) return SqlStatement('CAST($col AS NUMERIC) $op ?', [n]);
     return SqlStatement('$text $op ?', [value]);
   }
 }

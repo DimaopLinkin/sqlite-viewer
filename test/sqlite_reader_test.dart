@@ -126,6 +126,27 @@ void main() {
     expect(countWhere(FilterOperator.notEquals, '1', 'score'), 249);
   });
 
+  test('numeric filters compare numbers stored as text numerically', () {
+    db.execute(
+      "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('9'), ('10'), ('100'), (NULL);",
+    );
+    expect(
+      reader.count(
+        const TableQuery(
+          table: 't',
+          filters: [
+            ColumnFilter(
+              column: 'v',
+              op: FilterOperator.greaterThan,
+              value: '5',
+            ),
+          ],
+        ),
+      ),
+      3,
+    );
+  });
+
   test('null and empty filters', () {
     expect(countWhere(FilterOperator.isNull, '', 'score'), 1);
     expect(countWhere(FilterOperator.isNotNull, '', 'score'), 249);

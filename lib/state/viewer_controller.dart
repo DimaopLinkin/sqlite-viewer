@@ -19,6 +19,11 @@ class ViewerController extends ChangeNotifier {
   TableInfo? _selected;
   TableInfo? get selected => _selected;
 
+  /// Changes on every schema reload, so open table views rebuild from
+  /// scratch even when the selected table itself did not change.
+  int _schemaVersion = 0;
+  int get schemaVersion => _schemaVersion;
+
   bool _busy = false;
   bool get busy => _busy;
 
@@ -83,12 +88,13 @@ class ViewerController extends ChangeNotifier {
   /// Re-reads the schema, e.g. after the file was changed by another app.
   Future<void> reload() async {
     final source = _source;
-    if (source == null) return;
+    if (source == null || _busy) return;
     final generation = ++_generation;
     try {
       final tables = await source.listTables();
       if (generation != _generation) return;
       _tables = tables;
+      _schemaVersion++;
       _rowCounts = const {};
       if (!tables.contains(_selected)) {
         _selected = _defaultSelection(tables);
@@ -121,6 +127,7 @@ class ViewerController extends ChangeNotifier {
 
   Future<void> closeFile() async {
     ++_generation;
+    _busy = false;
     final source = _source;
     _source = null;
     _tables = const [];

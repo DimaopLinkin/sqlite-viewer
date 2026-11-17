@@ -62,10 +62,32 @@ class _HomePageState extends State<HomePage> {
                 busy: _viewer.busy,
                 themeMode: widget.themeMode,
                 onOpen: _open,
-                onReload: source == null ? null : _viewer.reload,
+                onReload: source == null || _viewer.busy
+                    ? null
+                    : _viewer.reload,
                 onClose: source == null ? null : _viewer.closeFile,
                 onToggleTheme: widget.onToggleTheme,
               ),
+              if (source?.notice case final notice?)
+                Container(
+                  color: colors.toolbar,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: colors.muted),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          notice,
+                          style: TextStyle(fontSize: 12, color: colors.muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               if (_viewer.error != null)
                 MaterialBanner(
                   leading: const Icon(Icons.error_outline),
@@ -116,7 +138,11 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   )
                                 : TableViewer(
-                                    key: ValueKey((source, selected)),
+                                    key: ValueKey((
+                                      source,
+                                      selected,
+                                      _viewer.schemaVersion,
+                                    )),
                                     source: source,
                                     table: selected,
                                   ),

@@ -9,9 +9,10 @@ String formatCount(int n) {
         '$suffix';
   }
 
+  // Thresholds sit where rounding would otherwise print "1000K".
   if (n < 1000) return '$n';
-  if (n < 1000000) return compact(n / 1000, 'K');
-  if (n < 1000000000) return compact(n / 1000000, 'M');
+  if (n < 999500) return compact(n / 1000, 'K');
+  if (n < 999500000) return compact(n / 1000000, 'M');
   return compact(n / 1000000000, 'B');
 }
 
@@ -46,11 +47,18 @@ String cellText(Object? value) {
   }
 }
 
-/// Full value for the row dialog and for copying.
+/// Value for the row dialog. Long blobs are shortened; use [copyText] for
+/// the clipboard.
 String fullText(Object? value) => switch (value) {
   null => '',
   final Uint8List bytes => hexDump(bytes),
   _ => value.toString(),
+};
+
+/// Complete value for the clipboard, blobs as hex without a size cap.
+String copyText(Object? value) => switch (value) {
+  final Uint8List bytes => hexDump(bytes, maxBytes: bytes.length),
+  _ => fullText(value),
 };
 
 /// Storage class of a value as SQLite reports it with `typeof()`.
@@ -89,6 +97,8 @@ String rowToJson(List<String> columns, List<Object?> row) {
   Object? jsonValue(Object? v) => switch (v) {
     final Uint8List b => base64Encode(b),
     final BigInt b => b.toString(),
+    // JSON has no Infinity or NaN.
+    final double d when !d.isFinite => d.toString(),
     _ => v,
   };
   return const JsonEncoder.withIndent('  ').convert({

@@ -249,7 +249,7 @@ class _ValueCell extends StatelessWidget {
       ],
     );
     if (choice == 'copy') {
-      await Clipboard.setData(ClipboardData(text: fullText(value)));
+      await Clipboard.setData(ClipboardData(text: copyText(value)));
     }
   }
 }

@@ -31,6 +31,13 @@ class NativeDbSource implements DbSource {
   @override
   final String name;
 
+  @override
+  String? get notice => _immutable
+      ? 'Opened as a read-only snapshot: SQLite could not create its -shm '
+            'file next to this WAL database, so changes still in the -wal '
+            'file are not shown.'
+      : null;
+
   static Future<NativeDbSource> open(
     String path, {
     required String name,

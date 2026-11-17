@@ -78,7 +78,8 @@ class TableController extends ChangeNotifier {
   }
 
   bool _disposed = false;
-  int _requestId = 0;
+  int _countId = 0;
+  int _pageId = 0;
   Timer? _debounce;
 
   TableQuery get query => TableQuery(
@@ -92,12 +93,18 @@ class TableController extends ChangeNotifier {
 
   Future<void> _loadColumns() async {
     try {
-      _columns = await source.columns(table.name);
+      final columns = await source.columns(table.name);
       if (_disposed) return;
-      for (final c in _columns) {
-        _columnWidths[c.name] = _headerWidth(c);
+      if (columns.length != _columns.length) _page = null;
+      _columns = columns;
+      final names = {for (final c in columns) c.name};
+      // Forget settings of columns that disappeared since the last load.
+      _filters.removeWhere((name, _) => !names.contains(name));
+      if (_sort != null && !names.contains(_sort!.column)) _sort = null;
+      for (final c in columns) {
+        _columnWidths.putIfAbsent(c.name, () => _headerWidth(c));
       }
-      await _refresh(countRows: true, fitColumns: true);
+      _refresh(countRows: true, fitColumns: _page == null);
     } catch (e) {
       if (_disposed) return;
       _loading = false;
@@ -126,37 +133,56 @@ class TableController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refresh({
-    bool countRows = false,
-    bool fitColumns = false,
-  }) async {
-    final id = ++_requestId;
+  /// Reloads what the current settings show. Counting and paging are
+  /// tracked separately, so a page change during a long `COUNT(*)` does not
+  /// throw the count away.
+  void _refresh({bool countRows = false, bool fitColumns = false}) {
+    if (countRows) _recount();
+    _loadPage(fitColumns: fitColumns);
+  }
+
+  Future<void> _recount() async {
+    final id = ++_countId;
+    _total = null;
+    notifyListeners();
+    try {
+      final total = await source.count(query);
+      if (id != _countId || _disposed) return;
+      _total = total;
+      // A reload may have shrunk the result below the current page.
+      final lastPage = pageCount - 1;
+      if (_pageIndex > lastPage) {
+        _pageIndex = lastPage;
+        _loadPage();
+      } else {
+        notifyListeners();
+      }
+    } catch (e) {
+      if (id != _countId || _disposed) return;
+      _error = '$e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadPage({bool fitColumns = false}) async {
+    final id = ++_pageId;
     _loading = true;
     _error = null;
-    if (countRows) _total = null;
     notifyListeners();
-    final query = this.query;
     try {
-      if (countRows) {
-        final total = await source.count(query);
-        if (id != _requestId || _disposed) return;
-        _total = total;
-        // Filters may have shrunk the result below the current page.
-        _pageIndex = math.min(_pageIndex, pageCount - 1);
-      }
       final page = await source.page(
         query,
         columns: columnNames,
         limit: _pageSize,
         offset: _pageIndex * _pageSize,
       );
-      if (id != _requestId || _disposed) return;
+      if (id != _pageId || _disposed) return;
       if (fitColumns) _fitColumnsToContent(page);
       _page = page;
       _loading = false;
       notifyListeners();
     } catch (e) {
-      if (id != _requestId || _disposed) return;
+      if (id != _pageId || _disposed) return;
       _loading = false;
       _error = '$e';
       notifyListeners();
@@ -188,10 +214,14 @@ class TableController extends ChangeNotifier {
   }
 
   void clearFilters() {
-    if (_filters.isEmpty) return;
     _debounce?.cancel();
+    final hadActive = activeFilterCount > 0;
     _filters.clear();
-    _applyFilters();
+    if (hadActive) {
+      _applyFilters();
+    } else {
+      notifyListeners();
+    }
   }
 
   void _applyFilters() {
@@ -229,7 +259,9 @@ class TableController extends ChangeNotifier {
     _refresh();
   }
 
-  void reload() => _refresh(countRows: true);
+  /// Re-reads columns, count and the current page, e.g. after the file was
+  /// changed by another app.
+  void reload() => _loadColumns();
 
   /// Row at an absolute position in the filtered and sorted result, used by
   /// the detail dialog to step past the current page.

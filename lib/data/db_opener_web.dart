@@ -25,6 +25,9 @@ class WebDbSource implements DbSource {
 
   @override
   final String name;
+
+  @override
+  String? get notice => null;
   final CommonDatabase _db;
   final SqliteReader _reader;
   final InMemoryFileSystem _fs;
