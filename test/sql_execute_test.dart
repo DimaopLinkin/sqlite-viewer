@@ -45,7 +45,7 @@ void main() {
     expect(r.wroteData, isFalse);
     expect(run('SELECT count(*) FROM item').rows.single.single, 3);
     expect(
-      describeSqlError(r.error!, r, canWrite: true),
+      describeSqlError(r.error!, r, writesOff: true),
       contains('Allow writes'),
     );
   });
@@ -103,7 +103,7 @@ void main() {
     expect(r.error!.message, contains('syntax error'));
     expect(r.error!.offset, sql.indexOf('SELEC 1'));
     expect(
-      describeSqlError(r.error!, r, canWrite: true),
+      describeSqlError(r.error!, r, writesOff: true),
       allOf(startsWith('Statement 2: '), contains('changed 1 row')),
     );
   });
@@ -127,6 +127,26 @@ void main() {
     );
     expect(committed.rolledBack, isFalse);
     expect(committed.changes, 1);
+  });
+
+  test('writes committed before an open transaction are kept', () {
+    final r = run(
+      "INSERT INTO item (name) VALUES ('d'); BEGIN; "
+      "INSERT INTO item (name) VALUES ('e');",
+      write: true,
+    );
+    expect(r.rolledBack, isTrue);
+    expect(r.wroteData, isTrue);
+    expect(r.changes, 1);
+    expect(r.lastInsertRowId, 4);
+    expect(run('SELECT count(*) FROM item').rows.single.single, 4);
+  });
+
+  test('comments before a statement do not shift the next one', () {
+    final r = run('/* select 1 */; select 1; -- x\n/* ; */ select 2 AS v');
+    expect(r.error, isNull);
+    expect(r.statementCount, 2);
+    expect(r.columns, ['v']);
   });
 
   test('large results are cut', () {

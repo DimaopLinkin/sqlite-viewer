@@ -103,23 +103,34 @@ class SqliteReader {
   SqlResult execute(String sql, {required bool allowWrites}) {
     final watch = Stopwatch()..start();
     db.execute('PRAGMA query_only = ${allowWrites ? 0 : 1}');
+    try {
+      return _execute(sql, watch);
+    } finally {
+      if (!db.autocommit) db.execute('ROLLBACK');
+      db.execute('PRAGMA query_only = 1');
+    }
+  }
+
+  SqlResult _execute(String sql, Stopwatch watch) {
     final changesBefore = _totalChanges();
     final rowIdBefore = db.lastInsertRowId;
 
     var consumed = 0;
     var statements = 0;
-    var wrote = false;
     var columns = const <String>[];
     var rows = const <List<Object?>>[];
     var truncated = false;
     SqlScriptError? error;
 
+    // Writes count once they are committed: right away in autocommit mode,
+    // or when the script's own transaction ends.
+    var pendingWrite = false;
+    var wrote = false;
+    var committedChanges = changesBefore;
+    var committedRowId = rowIdBefore;
+
     while (true) {
-      // Empty statements (stray semicolons) would make SQLite skip ahead
-      // without returning a statement, so drop them here.
-      while (consumed < sql.length && _isSeparator(sql.codeUnitAt(consumed))) {
-        consumed++;
-      }
+      consumed = _skipFiller(sql, consumed);
       if (consumed >= sql.length) break;
       final rest = sql.substring(consumed);
       final CommonPreparedStatement statement;
@@ -153,40 +164,61 @@ class SqliteReader {
           truncated = more;
         }
         statements++;
-        if (!readOnly) wrote = true;
+        if (!readOnly) pendingWrite = true;
       } on SqliteException catch (e) {
         error = _error(e, statements, rest, consumed);
         break;
       } finally {
         statement.close();
+        if (db.autocommit) {
+          // Nothing is pending outside a transaction: it was committed, or
+          // rolled back by a failing statement or by ROLLBACK.
+          if (pendingWrite) wrote = true;
+          pendingWrite = false;
+          committedChanges = _totalChanges();
+          committedRowId = db.lastInsertRowId;
+        }
       }
-      // The statement text starts at the beginning of [rest] unless SQLite
-      // skipped an empty statement hidden behind a comment.
-      final start = rest.indexOf(statement.sql);
-      consumed += (start < 0 ? 0 : start) + statement.sql.length;
+      // Leading filler was skipped above, so the statement starts at the
+      // beginning of [rest].
+      consumed += statement.sql.length;
     }
 
     final rolledBack = !db.autocommit;
-    if (rolledBack) db.execute('ROLLBACK');
-    final changes = _totalChanges() - changesBefore;
-    final rowId = db.lastInsertRowId;
-    db.execute('PRAGMA query_only = 1');
     return SqlResult(
       statementCount: statements,
       columns: columns,
       rows: rows,
       truncated: truncated,
-      changes: rolledBack ? 0 : changes,
-      wroteData: wrote && !rolledBack,
+      changes: committedChanges - changesBefore,
+      wroteData: wrote,
       rolledBack: rolledBack,
-      lastInsertRowId: !rolledBack && rowId != rowIdBefore ? rowId : null,
+      lastInsertRowId: committedRowId != rowIdBefore ? committedRowId : null,
       elapsed: watch.elapsed,
       error: error,
     );
   }
 
-  static bool _isSeparator(int c) =>
-      c == 0x3B || c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09;
+  /// Skips whitespace, stray semicolons and comments from [i]. SQLite would
+  /// skip an empty statement without returning it, which would hide where
+  /// the next statement starts.
+  static int _skipFiller(String sql, int i) {
+    while (i < sql.length) {
+      final c = sql.codeUnitAt(i);
+      if (c == 0x3B || c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09) {
+        i++;
+      } else if (sql.startsWith('--', i)) {
+        final end = sql.indexOf('\n', i);
+        i = end < 0 ? sql.length : end + 1;
+      } else if (sql.startsWith('/*', i)) {
+        final end = sql.indexOf('*/', i + 2);
+        i = end < 0 ? sql.length : end + 2;
+      } else {
+        break;
+      }
+    }
+    return i;
+  }
 
   int _totalChanges() =>
       _asInt(db.select('SELECT total_changes()').rows.first.first);

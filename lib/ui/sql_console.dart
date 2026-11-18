@@ -298,7 +298,11 @@ class _StatusBar extends StatelessWidget {
             _line(
               Icons.error_outline,
               scheme.error,
-              describeSqlError(error, result, canWrite: c.source.canWrite),
+              describeSqlError(
+                error,
+                result,
+                writesOff: c.source.canWrite && !c.allowWrites,
+              ),
             )
           else
             _line(
@@ -379,7 +383,7 @@ String describeSqlResult(SqlResult result) {
 String describeSqlError(
   SqlScriptError error,
   SqlResult result, {
-  required bool canWrite,
+  required bool writesOff,
 }) {
   final buffer = StringBuffer();
   if (error.statementIndex > 0 || result.statementCount > 0) {
@@ -395,7 +399,7 @@ String describeSqlError(
       buffer.write(' and changed ${_plural(result.changes, 'row', 'rows')}');
     }
   }
-  if (canWrite && error.code & 0xFF == _sqliteReadOnly) {
+  if (writesOff && error.code & 0xFF == _sqliteReadOnly) {
     buffer.write('. Turn on “Allow writes” to change the database');
   }
   return buffer.toString();

@@ -79,6 +79,9 @@ class NativeDbSource implements DbSource {
       );
     }
     try {
+      // The viewer's own reads run in other isolates; let a write wait for
+      // their shared locks instead of failing with "database is locked".
+      if (write) db.execute('PRAGMA busy_timeout = 5000');
       return action(SqliteReader(db));
     } finally {
       db.close();
@@ -152,7 +155,13 @@ class NativeDbSource implements DbSource {
 
   static bool _journalFailed(SqlResult result) {
     final error = result.error;
-    if (error == null || result.wroteData) return false;
+    // Retry only when nothing could have been committed.
+    if (error == null ||
+        result.wroteData ||
+        result.rolledBack ||
+        result.changes > 0) {
+      return false;
+    }
     final primary = error.code & 0xFF;
     return primary == _sqliteCantOpen ||
         primary == _sqliteIoErr ||

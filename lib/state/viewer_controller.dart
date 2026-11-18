@@ -82,7 +82,11 @@ class ViewerController extends ChangeNotifier {
 
   /// Re-reads the schema, e.g. after the file was changed by another app.
   Future<void> reload() async {
-    if (_busy) return;
+    if (_busy) {
+      // E.g. the SQL console changed the schema while an older reload runs.
+      _reloadAgain = true;
+      return;
+    }
     final generation = ++_generation;
     _busy = true;
     notifyListeners();
@@ -99,12 +103,22 @@ class ViewerController extends ChangeNotifier {
       _busy = false;
       notifyListeners();
       _loadCounts(generation);
+      _reloadIfRequested();
     } catch (e) {
       if (generation != _generation) return;
       _busy = false;
       _error = 'Could not reload: $e';
       notifyListeners();
+      _reloadIfRequested();
     }
+  }
+
+  bool _reloadAgain = false;
+
+  void _reloadIfRequested() {
+    if (!_reloadAgain) return;
+    _reloadAgain = false;
+    reload();
   }
 
   /// First table, or the first view if there are no tables.
