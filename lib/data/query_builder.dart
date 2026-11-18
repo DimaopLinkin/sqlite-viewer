@@ -58,6 +58,24 @@ abstract final class QueryBuilder {
     );
   }
 
+  /// The first row of [table] whose [columns] equal [values], compared with
+  /// `=` like SQLite compares a foreign key with its parent key.
+  static SqlStatement lookup(
+    String table, {
+    required List<String> select,
+    required List<String> columns,
+    required List<Object?> values,
+  }) {
+    assert(columns.length == values.length && columns.isNotEmpty);
+    final list = select.isEmpty ? '*' : select.map(quoteIdentifier).join(', ');
+    final where = [for (final c in columns) '${quoteIdentifier(c)} = ?'];
+    return SqlStatement(
+      'SELECT $list FROM ${quoteIdentifier(table)} '
+      'WHERE ${where.join(' AND ')} LIMIT 1',
+      values,
+    );
+  }
+
   static SqlStatement _where(List<ColumnFilter> filters) {
     final parts = <String>[];
     final args = <Object?>[];

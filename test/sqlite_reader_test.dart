@@ -214,4 +214,75 @@ void main() {
       );
     });
   });
+
+  group('foreign keys', () {
+    late Database fk;
+    late SqliteReader fkReader;
+
+    setUp(() {
+      fk = sqlite3.openInMemory()
+        ..execute('''
+          CREATE TABLE region (code TEXT, country TEXT, name TEXT,
+            PRIMARY KEY (code, country));
+          CREATE TABLE agency (id INTEGER PRIMARY KEY, title TEXT,
+            region_code TEXT, region_country TEXT,
+            FOREIGN KEY (region_code, region_country) REFERENCES region);
+          CREATE TABLE employee (
+            id INTEGER PRIMARY KEY,
+            agency_id INTEGER REFERENCES agency(id),
+            boss INTEGER REFERENCES employee,
+            ghost INTEGER REFERENCES missing_table
+          );
+          INSERT INTO region VALUES ('msk', 'ru', 'Москва');
+          INSERT INTO agency VALUES (5, 'Main', 'msk', 'ru');
+          INSERT INTO employee VALUES (1, 5, NULL, 1), (2, '5', 1, NULL),
+            (3, 9, NULL, NULL);
+        ''');
+      fkReader = SqliteReader(fk);
+    });
+
+    tearDown(() => fk.close());
+
+    test('lists keys and resolves implicit parent columns', () {
+      expect(fkReader.foreignKeys('employee'), const [
+        ForeignKey(table: 'employee', from: ['boss'], to: ['id']),
+        ForeignKey(table: 'agency', from: ['agency_id'], to: ['id']),
+      ]);
+      expect(fkReader.foreignKeys('agency'), const [
+        ForeignKey(
+          table: 'region',
+          from: ['region_code', 'region_country'],
+          to: ['code', 'country'],
+        ),
+      ]);
+      expect(fkReader.foreignKeys('region'), isEmpty);
+    });
+
+    test('reads the referenced row', () {
+      const agency = ForeignKey(
+        table: 'agency',
+        from: ['agency_id'],
+        to: ['id'],
+      );
+      final row = fkReader.referencedRow(agency, const [5])!;
+      expect(row.table, 'agency');
+      expect(
+        [for (final c in row.columns) c.name],
+        ['id', 'title', 'region_code', 'region_country'],
+      );
+      expect(row.values, [5, 'Main', 'msk', 'ru']);
+      // Text stored in the child still matches through the parent's
+      // INTEGER affinity, as in SQLite's own key checks.
+      expect(fkReader.referencedRow(agency, const ['5'])?.values.first, 5);
+      expect(fkReader.referencedRow(agency, const [9]), isNull);
+      expect(fkReader.referencedRow(agency, const [null]), isNull);
+
+      final region = fkReader.foreignKeys('agency').single;
+      expect(fkReader.referencedRow(region, const ['msk', 'ru'])?.values, [
+        'msk',
+        'ru',
+        'Москва',
+      ]);
+    });
+  });
 }
