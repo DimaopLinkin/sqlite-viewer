@@ -48,6 +48,16 @@ class _SidebarState extends State<Sidebar> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          SizedBox(
+            height: 30,
+            child: _NavTile(
+              icon: Icons.terminal,
+              label: 'SQL query',
+              selected: controller.sqlOpen,
+              onTap: controller.openSql,
+            ),
+          ),
+          Divider(height: 1, color: colors.gridLine),
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
             child: TextField(
@@ -126,7 +136,9 @@ class _SidebarState extends State<Sidebar> {
         table: items[i],
         count: widget.controller.rowCounts[items[i].name],
         countKnown: widget.controller.rowCounts.containsKey(items[i].name),
-        selected: widget.controller.selected == items[i],
+        selected:
+            !widget.controller.sqlOpen &&
+            widget.controller.selected == items[i],
         onTap: () => widget.controller.select(items[i]),
       ),
     );
@@ -193,6 +205,53 @@ class _TableTile extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Sidebar entry that is not a table, e.g. the SQL console.
+class _NavTile extends StatelessWidget {
+  const _NavTile({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ViewerColors.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected ? colors.selection : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          decoration: selected
+              ? BoxDecoration(border: Border.all(color: scheme.primary))
+              : null,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Icon(icon, size: 14, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
           ),
         ),
       ),

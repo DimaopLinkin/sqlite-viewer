@@ -65,14 +65,18 @@ class NativeDbSource implements DbSource {
   static T _withReader<T>(
     String path,
     bool immutable,
-    T Function(SqliteReader reader) action,
-  ) {
+    T Function(SqliteReader reader) action, {
+    bool write = false,
+  }) {
     final Database db;
     if (immutable) {
       final uri = Uri.file(path).replace(queryParameters: {'immutable': '1'});
       db = sqlite3.open(uri.toString(), mode: OpenMode.readOnly, uri: true);
     } else {
-      db = sqlite3.open(path, mode: OpenMode.readOnly);
+      db = sqlite3.open(
+        path,
+        mode: write ? OpenMode.readWrite : OpenMode.readOnly,
+      );
     }
     try {
       return action(SqliteReader(db));
@@ -110,6 +114,54 @@ class NativeDbSource implements DbSource {
   }) => _run(
     (r) => r.page(query, columns: columns, limit: limit, offset: offset),
   );
+
+  @override
+  bool get canWrite => !_immutable;
+
+  @override
+  String? get writeNotice => null;
+
+  @override
+  Future<SqlResult> execute(String sql, {required bool allowWrites}) {
+    final path = _path;
+    final immutable = _immutable;
+    final write = allowWrites && !immutable;
+    return Isolate.run(() {
+      final result = _withReader(
+        path,
+        immutable,
+        (r) => r.execute(sql, allowWrites: write),
+        write: write,
+      );
+      if (!write || !_journalFailed(result)) return result;
+      // In the macOS sandbox only the picked file itself is writable, so
+      // SQLite cannot create its -journal file next to it. Nothing was
+      // written yet; run again with the rollback journal kept in memory.
+      return _withReader(path, immutable, (r) {
+        final mode = r.db.select('PRAGMA journal_mode').first.values.first;
+        if (mode is! String || !_fileJournalModes.contains(mode)) {
+          return result;
+        }
+        r.db.execute('PRAGMA journal_mode = MEMORY');
+        return r.execute(sql, allowWrites: true);
+      }, write: true);
+    });
+  }
+
+  static const _fileJournalModes = {'delete', 'truncate', 'persist'};
+
+  static bool _journalFailed(SqlResult result) {
+    final error = result.error;
+    if (error == null || result.wroteData) return false;
+    final primary = error.code & 0xFF;
+    return primary == _sqliteCantOpen ||
+        primary == _sqliteIoErr ||
+        error.code == _sqliteReadOnlyDirectory;
+  }
+
+  static const _sqliteIoErr = 10;
+  static const _sqliteCantOpen = 14;
+  static const _sqliteReadOnlyDirectory = 8 | (6 << 8);
 
   @override
   Future<void> close() async {}

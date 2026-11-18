@@ -148,3 +148,76 @@ class RowPage {
   final int offset;
   final List<List<Object?>> rows;
 }
+
+/// Outcome of running a user-written SQL script.
+///
+/// Statements run one after another; a failing statement stops the script.
+/// The grid shows the rows of the last statement that returned columns.
+@immutable
+class SqlResult {
+  const SqlResult({
+    required this.statementCount,
+    required this.columns,
+    required this.rows,
+    required this.truncated,
+    required this.changes,
+    required this.wroteData,
+    required this.elapsed,
+    this.rolledBack = false,
+    this.lastInsertRowId,
+    this.error,
+  });
+
+  /// Statements that ran to completion.
+  final int statementCount;
+
+  /// Columns of the shown result set; empty when no statement returned any.
+  final List<String> columns;
+  final List<List<Object?>> rows;
+
+  /// More rows existed than [SqlResult.maxRows].
+  final bool truncated;
+
+  /// Rows inserted, updated or deleted by the whole script.
+  final int changes;
+
+  /// A statement that may change the database (DML, DDL, ...) completed, so
+  /// the schema and the table views should be reloaded.
+  final bool wroteData;
+
+  /// The script left a transaction open and it was rolled back, so nothing
+  /// it changed was kept.
+  final bool rolledBack;
+
+  /// `last_insert_rowid()` after the script, when it inserted rows.
+  final int? lastInsertRowId;
+  final Duration elapsed;
+  final SqlScriptError? error;
+
+  bool get hasResultSet => columns.isNotEmpty;
+
+  /// Rows kept for display. Larger results are cut to keep memory bounded.
+  static const maxRows = 10000;
+}
+
+/// Why a statement of a script failed.
+@immutable
+class SqlScriptError {
+  const SqlScriptError({
+    required this.message,
+    required this.code,
+    required this.statementIndex,
+    this.offset,
+  });
+
+  final String message;
+
+  /// Extended SQLite result code.
+  final int code;
+
+  /// 0-based index of the failing statement.
+  final int statementIndex;
+
+  /// Character offset of the error in the script, when SQLite reports one.
+  final int? offset;
+}

@@ -167,7 +167,7 @@ class _DataGridState extends State<DataGrid> {
               );
             }
             return TableViewCell(
-              child: _ValueCell(value: rows[row - 1][col - 1]),
+              child: ValueCell(value: rows[row - 1][col - 1]),
             );
           },
         ),
@@ -202,8 +202,9 @@ class _DataGridState extends State<DataGrid> {
   }
 }
 
-class _ValueCell extends StatelessWidget {
-  const _ValueCell({required this.value});
+/// One value in a grid cell, with a context menu to copy it.
+class ValueCell extends StatelessWidget {
+  const ValueCell({super.key, required this.value});
 
   final Object? value;
 

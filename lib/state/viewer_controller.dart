@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/db_source.dart';
 import '../data/models.dart';
+import 'sql_controller.dart';
 
 /// State of one open file (one tab): its tables and the selected table.
 ///
@@ -42,6 +43,14 @@ class ViewerController extends ChangeNotifier {
 
   TableInfo? _selected;
   TableInfo? get selected => _selected;
+
+  /// SQL console of this file; its script and result survive switching to a
+  /// table and back.
+  late final sql = SqlController(source: source, onDataChanged: reload);
+
+  /// The SQL console is shown instead of the selected table.
+  bool _sqlOpen = false;
+  bool get sqlOpen => _sqlOpen;
 
   /// Changes on every schema reload, so open table views rebuild from
   /// scratch even when the selected table itself did not change.
@@ -104,8 +113,15 @@ class ViewerController extends ChangeNotifier {
       tables.firstOrNull;
 
   void select(TableInfo table) {
-    if (_selected == table) return;
+    if (_selected == table && !_sqlOpen) return;
     _selected = table;
+    _sqlOpen = false;
+    notifyListeners();
+  }
+
+  void openSql() {
+    if (_sqlOpen) return;
+    _sqlOpen = true;
     notifyListeners();
   }
 
@@ -117,6 +133,7 @@ class ViewerController extends ChangeNotifier {
   @override
   void dispose() {
     ++_generation;
+    sql.dispose();
     source.close();
     super.dispose();
   }
