@@ -5,6 +5,7 @@ import 'package:sqlite_viewer/data/db_source.dart';
 import 'package:sqlite_viewer/data/models.dart';
 import 'package:sqlite_viewer/data/sqlite_reader.dart';
 import 'package:sqlite_viewer/main.dart';
+import 'package:sqlite_viewer/ui/sql_console.dart';
 
 /// Runs the real reader on an in-memory database, on the test isolate.
 class _MemorySource implements DbSource {
@@ -52,6 +53,16 @@ class _MemorySource implements DbSource {
     required int offset,
   }) async =>
       _reader.page(query, columns: columns, limit: limit, offset: offset);
+
+  @override
+  bool get canWrite => true;
+
+  @override
+  String? get writeNotice => null;
+
+  @override
+  Future<SqlResult> execute(String sql, {required bool allowWrites}) async =>
+      _reader.execute(sql, allowWrites: allowWrites);
 
   @override
   Future<void> close() async => _db.close();
@@ -278,5 +289,49 @@ void main() {
     await tester.tap(find.byTooltip('Close tab').first);
     await tester.pumpAndSettle();
     expect(find.text('Open file…'), findsOneWidget);
+  });
+
+  testWidgets('SQL console runs selects and writes', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('SQL query'));
+    await tester.pumpAndSettle();
+
+    final editor = find.descendant(
+      of: find.byType(SqlConsole),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(
+      editor,
+      'SELECT local_id, server_id FROM employee WHERE server_id <= 1002',
+    );
+    await tester.tap(find.text('Run'));
+    await tester.pumpAndSettle();
+    expect(find.text('uuid-2'), findsOneWidget);
+    expect(find.textContaining('2 rows · '), findsOneWidget);
+
+    // Writes are off by default.
+    await tester.enterText(
+      editor,
+      "INSERT INTO general_agency (title) VALUES ('new')",
+    );
+    await tester.tap(find.text('Run'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Allow writes” to change'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1 row affected'), findsOneWidget);
+    // The sidebar count of the changed table is reloaded.
+    expect(find.text('1'), findsWidgets);
+
+    // The script stays when switching to a table and back.
+    await tester.tap(find.text('general_agency'));
+    await tester.pumpAndSettle();
+    expect(find.text('new'), findsOneWidget);
+    await tester.tap(find.text('SQL query'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('INSERT INTO general_agency'), findsOneWidget);
   });
 }

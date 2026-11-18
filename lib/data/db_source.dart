@@ -1,6 +1,7 @@
 import 'models.dart';
 
-/// Read-only access to an opened SQLite file.
+/// Access to an opened SQLite file. The viewer only reads; [execute] runs
+/// the user's own SQL and may write when asked to.
 ///
 /// All methods are asynchronous so the native implementation can run queries
 /// off the UI isolate.
@@ -31,6 +32,16 @@ abstract interface class DbSource {
     required int limit,
     required int offset,
   });
+
+  /// Whether [execute] can change the database at all.
+  bool get canWrite;
+
+  /// Shown in the SQL console while writes are allowed, or `null`.
+  String? get writeNotice;
+
+  /// Runs a user-written SQL script. With [allowWrites] off any statement
+  /// that would change the database fails.
+  Future<SqlResult> execute(String sql, {required bool allowWrites});
 
   Future<void> close();
 }

@@ -6,6 +6,7 @@ import '../data/db_source.dart';
 import '../state/viewer_controller.dart';
 import '../state/workspace_controller.dart';
 import 'sidebar.dart';
+import 'sql_console.dart';
 import 'table_viewer.dart';
 import 'theme.dart';
 
@@ -193,7 +194,9 @@ class _DbTab extends StatelessWidget {
                     ),
                   ),
                   Expanded(
-                    child: selected == null
+                    child: viewer.sqlOpen
+                        ? SqlConsole(controller: viewer.sql)
+                        : selected == null
                         ? Center(
                             child: Text(
                               'The database has no tables',

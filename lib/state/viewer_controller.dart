@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/db_source.dart';
 import '../data/models.dart';
+import 'sql_controller.dart';
 
 /// State of one open file (one tab): its tables and the selected table.
 ///
@@ -43,6 +44,14 @@ class ViewerController extends ChangeNotifier {
   TableInfo? _selected;
   TableInfo? get selected => _selected;
 
+  /// SQL console of this file; its script and result survive switching to a
+  /// table and back.
+  late final sql = SqlController(source: source, onDataChanged: reload);
+
+  /// The SQL console is shown instead of the selected table.
+  bool _sqlOpen = false;
+  bool get sqlOpen => _sqlOpen;
+
   /// Changes on every schema reload, so open table views rebuild from
   /// scratch even when the selected table itself did not change.
   int _schemaVersion = 0;
@@ -73,7 +82,11 @@ class ViewerController extends ChangeNotifier {
 
   /// Re-reads the schema, e.g. after the file was changed by another app.
   Future<void> reload() async {
-    if (_busy) return;
+    if (_busy) {
+      // E.g. the SQL console changed the schema while an older reload runs.
+      _reloadAgain = true;
+      return;
+    }
     final generation = ++_generation;
     _busy = true;
     notifyListeners();
@@ -90,12 +103,22 @@ class ViewerController extends ChangeNotifier {
       _busy = false;
       notifyListeners();
       _loadCounts(generation);
+      _reloadIfRequested();
     } catch (e) {
       if (generation != _generation) return;
       _busy = false;
       _error = 'Could not reload: $e';
       notifyListeners();
+      _reloadIfRequested();
     }
+  }
+
+  bool _reloadAgain = false;
+
+  void _reloadIfRequested() {
+    if (!_reloadAgain) return;
+    _reloadAgain = false;
+    reload();
   }
 
   /// First table, or the first view if there are no tables.
@@ -104,8 +127,15 @@ class ViewerController extends ChangeNotifier {
       tables.firstOrNull;
 
   void select(TableInfo table) {
-    if (_selected == table) return;
+    if (_selected == table && !_sqlOpen) return;
     _selected = table;
+    _sqlOpen = false;
+    notifyListeners();
+  }
+
+  void openSql() {
+    if (_sqlOpen) return;
+    _sqlOpen = true;
     notifyListeners();
   }
 
@@ -117,6 +147,7 @@ class ViewerController extends ChangeNotifier {
   @override
   void dispose() {
     ++_generation;
+    sql.dispose();
     source.close();
     super.dispose();
   }

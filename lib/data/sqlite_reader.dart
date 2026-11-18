@@ -1,9 +1,11 @@
+import 'dart:convert';
+
 import 'package:sqlite3/common.dart';
 
 import 'models.dart';
 import 'query_builder.dart';
 
-/// Synchronous read-only queries over an open SQLite connection.
+/// Synchronous queries over an open SQLite connection.
 ///
 /// Shared by the native implementation (which runs it inside a background
 /// isolate) and the web implementation (which runs it on the WASM build).
@@ -146,6 +148,160 @@ class SqliteReader {
     );
     final result = db.select(statement.sql, statement.args);
     return RowPage(offset: offset, rows: result.rows);
+  }
+
+  /// Runs a user-written script statement by statement.
+  ///
+  /// Statements are prepared one at a time, so later statements can use
+  /// tables created by earlier ones. With [allowWrites] off the connection is
+  /// switched to `query_only`, so anything that would change the file fails
+  /// with an error instead. A transaction the script leaves open is rolled
+  /// back, because the connection is shared with the viewer (web) or closed
+  /// right after (native).
+  SqlResult execute(String sql, {required bool allowWrites}) {
+    final watch = Stopwatch()..start();
+    db.execute('PRAGMA query_only = ${allowWrites ? 0 : 1}');
+    try {
+      return _execute(sql, watch);
+    } finally {
+      if (!db.autocommit) db.execute('ROLLBACK');
+      db.execute('PRAGMA query_only = 1');
+    }
+  }
+
+  SqlResult _execute(String sql, Stopwatch watch) {
+    final changesBefore = _totalChanges();
+    final rowIdBefore = db.lastInsertRowId;
+
+    var consumed = 0;
+    var statements = 0;
+    var columns = const <String>[];
+    var rows = const <List<Object?>>[];
+    var truncated = false;
+    SqlScriptError? error;
+
+    // Writes count once they are committed: right away in autocommit mode,
+    // or when the script's own transaction ends.
+    var pendingWrite = false;
+    var wrote = false;
+    var committedChanges = changesBefore;
+    var committedRowId = rowIdBefore;
+
+    while (true) {
+      consumed = _skipFiller(sql, consumed);
+      if (consumed >= sql.length) break;
+      final rest = sql.substring(consumed);
+      final CommonPreparedStatement statement;
+      try {
+        statement = db.prepare(rest);
+      } on ArgumentError {
+        break; // Only whitespace or comments are left.
+      } on SqliteException catch (e) {
+        error = _error(e, statements, rest, consumed);
+        break;
+      }
+      try {
+        final readOnly = statement.isReadOnly;
+        final cursor = statement.iterateWith(const StatementParameters.empty());
+        if (cursor.columnNames.isEmpty) {
+          while (cursor.moveNext()) {}
+        } else {
+          final kept = <List<Object?>>[];
+          var more = false;
+          while (cursor.moveNext()) {
+            if (kept.length < SqlResult.maxRows) {
+              kept.add(List.of(cursor.current.values));
+            } else {
+              more = true;
+              // A write with RETURNING has to run to the end; a read can stop.
+              if (readOnly) break;
+            }
+          }
+          columns = List.unmodifiable(cursor.columnNames);
+          rows = kept;
+          truncated = more;
+        }
+        statements++;
+        if (!readOnly) pendingWrite = true;
+      } on SqliteException catch (e) {
+        error = _error(e, statements, rest, consumed);
+        break;
+      } finally {
+        statement.close();
+        if (db.autocommit) {
+          // Nothing is pending outside a transaction: it was committed, or
+          // rolled back by a failing statement or by ROLLBACK.
+          if (pendingWrite) wrote = true;
+          pendingWrite = false;
+          committedChanges = _totalChanges();
+          committedRowId = db.lastInsertRowId;
+        }
+      }
+      // Leading filler was skipped above, so the statement starts at the
+      // beginning of [rest].
+      consumed += statement.sql.length;
+    }
+
+    final rolledBack = !db.autocommit;
+    return SqlResult(
+      statementCount: statements,
+      columns: columns,
+      rows: rows,
+      truncated: truncated,
+      changes: committedChanges - changesBefore,
+      wroteData: wrote,
+      rolledBack: rolledBack,
+      lastInsertRowId: committedRowId != rowIdBefore ? committedRowId : null,
+      elapsed: watch.elapsed,
+      error: error,
+    );
+  }
+
+  /// Skips whitespace, stray semicolons and comments from [i]. SQLite would
+  /// skip an empty statement without returning it, which would hide where
+  /// the next statement starts.
+  static int _skipFiller(String sql, int i) {
+    while (i < sql.length) {
+      final c = sql.codeUnitAt(i);
+      if (c == 0x3B || c == 0x20 || c == 0x0A || c == 0x0D || c == 0x09) {
+        i++;
+      } else if (sql.startsWith('--', i)) {
+        final end = sql.indexOf('\n', i);
+        i = end < 0 ? sql.length : end + 1;
+      } else if (sql.startsWith('/*', i)) {
+        final end = sql.indexOf('*/', i + 2);
+        i = end < 0 ? sql.length : end + 2;
+      } else {
+        break;
+      }
+    }
+    return i;
+  }
+
+  int _totalChanges() =>
+      _asInt(db.select('SELECT total_changes()').rows.first.first);
+
+  static SqlScriptError _error(
+    SqliteException e,
+    int statementIndex,
+    String rest,
+    int consumed,
+  ) {
+    int? offset;
+    if (e.offset case final bytes? when bytes >= 0) {
+      // SQLite reports a byte offset into the UTF-8 text of the statement.
+      final encoded = utf8.encode(rest);
+      final end = bytes > encoded.length ? encoded.length : bytes;
+      offset =
+          consumed +
+          utf8.decode(encoded.sublist(0, end), allowMalformed: true).length;
+    }
+    return SqlScriptError(
+      message: e.message,
+      code: e.extendedResultCode,
+      statementIndex: statementIndex,
+      offset: offset,
+    );
   }
 
   static int _asInt(Object? value) => switch (value) {

@@ -51,7 +51,10 @@ class WebDbSource implements DbSource {
     fs.fileData[path] = data;
     sqlite.registerVirtualFileSystem(fs);
     try {
-      final db = sqlite.open(path, vfs: fs.name, mode: OpenMode.readOnly);
+      // Read-write is safe: the connection works on an in-memory copy, and
+      // the viewer's own queries never write. The SQL console guards writes
+      // with `query_only`.
+      final db = sqlite.open(path, vfs: fs.name, mode: OpenMode.readWrite);
       final reader = SqliteReader(db);
       try {
         reader.probe();
@@ -101,6 +104,18 @@ class WebDbSource implements DbSource {
     required int offset,
   }) async =>
       _reader.page(query, columns: columns, limit: limit, offset: offset);
+
+  @override
+  bool get canWrite => true;
+
+  @override
+  String? get writeNotice =>
+      'Changes go to an in-memory copy of the file and are lost when it is '
+      'closed. The original file is not modified.';
+
+  @override
+  Future<SqlResult> execute(String sql, {required bool allowWrites}) async =>
+      _reader.execute(sql, allowWrites: allowWrites);
 
   @override
   Future<void> close() async {

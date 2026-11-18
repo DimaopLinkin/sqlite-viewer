@@ -44,6 +44,16 @@ class _FakeSource implements DbSource {
   }) => throw UnimplementedError();
 
   @override
+  bool get canWrite => false;
+
+  @override
+  String? get writeNotice => null;
+
+  @override
+  Future<SqlResult> execute(String sql, {required bool allowWrites}) =>
+      throw UnimplementedError();
+
+  @override
   Future<void> close() async => closed = true;
 }
 
