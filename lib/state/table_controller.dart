@@ -98,8 +98,10 @@ class TableController extends ChangeNotifier {
 
   Future<void> _loadColumns() async {
     try {
+      // Loaded side by side; _loadForeignKeys never throws.
+      final pendingKeys = _loadForeignKeys();
       final columns = await source.columns(table.name);
-      final foreignKeys = await _loadForeignKeys();
+      final foreignKeys = await pendingKeys;
       if (_disposed) return;
       _foreignKeys = foreignKeys;
       if (columns.length != _columns.length) _page = null;

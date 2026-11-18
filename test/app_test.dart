@@ -81,8 +81,11 @@ DbSource _sampleSource() {
 }
 
 void main() {
-  Future<void> openApp(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1600, 1000);
+  Future<void> openApp(
+    WidgetTester tester, {
+    Size size = const Size(1600, 1000),
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
@@ -206,5 +209,20 @@ void main() {
     expect(find.text('employee  /  1', findRichText: true), findsOneWidget);
     expect(find.text('Agency one'), findsNothing);
     expect(find.text('Agency two'), findsNothing);
+  });
+
+  testWidgets('nested references fit a narrow dialog', (tester) async {
+    await openApp(tester, size: const Size(700, 900));
+    // The main window is laid out for wider screens; only the dialog is
+    // checked here. Flutter reports an overflow once per render object.
+    tester.takeException();
+    await tester.tap(find.text('uuid-2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('general_agency (id)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('general_category (id)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retail'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

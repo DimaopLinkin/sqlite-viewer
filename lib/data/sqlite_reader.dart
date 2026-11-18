@@ -98,7 +98,15 @@ class SqliteReader {
 
   /// The parent row [key] points to for the child [values] (one per
   /// [ForeignKey.from] column), or `null` if there is none.
+  /// [ReferencedRow.foreignKeys] holds the parent table's own keys.
   ReferencedRow? referencedRow(ForeignKey key, List<Object?> values) {
+    if (values.length != key.to.length) {
+      throw ArgumentError.value(
+        values,
+        'values',
+        'Expected ${key.to.length} values for $key',
+      );
+    }
     if (values.any((v) => v == null)) return null;
     final parentColumns = columns(key.table);
     if (parentColumns.isEmpty) return null;
@@ -114,6 +122,7 @@ class SqliteReader {
       table: key.table,
       columns: parentColumns,
       values: result.rows.first,
+      foreignKeys: foreignKeys(key.table),
     );
   }
 

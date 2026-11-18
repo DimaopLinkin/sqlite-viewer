@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../data/db_source.dart';
@@ -10,14 +13,16 @@ import 'theme.dart';
 /// cyclic keys (e.g. `employee.manager_id → employee`) from nesting forever.
 const maxReferenceDepth = 4;
 
-/// The foreign key that starts at [column], if any. A composite key is shown
-/// on its first column.
-ForeignKey? foreignKeyAt(List<ForeignKey> keys, String column) {
-  for (final key in keys) {
-    if (key.from.first == column) return key;
-  }
-  return null;
-}
+/// SQLite identifiers are case-insensitive, and `PRAGMA foreign_key_list`
+/// reports them as written in the key, not in the column definition.
+bool _sameName(String a, String b) => a.toLowerCase() == b.toLowerCase();
+
+/// The foreign keys that start at [column]. A composite key is shown on its
+/// first column.
+List<ForeignKey> foreignKeysAt(List<ForeignKey> keys, String column) => [
+  for (final key in keys)
+    if (_sameName(key.from.first, column)) key,
+];
 
 /// Child values of [key] taken from a row, or `null` if a column is missing.
 List<Object?>? keyValues(
@@ -27,7 +32,7 @@ List<Object?>? keyValues(
 ) {
   final values = <Object?>[];
   for (final name in key.from) {
-    final i = columns.indexWhere((c) => c.name == name);
+    final i = columns.indexWhere((c) => _sameName(c.name, name));
     if (i < 0 || i >= row.length) return null;
     values.add(row[i]);
   }
@@ -117,6 +122,7 @@ class _ReferencePanelState extends State<ReferencePanel> {
   bool _loading = true;
   String? _error;
   final Set<ForeignKey> _expanded = {};
+  int _request = 0;
 
   @override
   void initState() {
@@ -124,28 +130,39 @@ class _ReferencePanelState extends State<ReferencePanel> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(ReferencePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.foreignKey != widget.foreignKey ||
+        oldWidget.source != widget.source ||
+        !listEquals(oldWidget.values, widget.values)) {
+      _expanded.clear();
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final request = ++_request;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _row = null;
+    });
     try {
       final row = await widget.source.referencedRow(
         widget.foreignKey,
         widget.values,
       );
-      var keys = const <ForeignKey>[];
-      if (row != null && widget.depth < maxReferenceDepth) {
-        try {
-          keys = await widget.source.foreignKeys(widget.foreignKey.table);
-        } catch (_) {
-          // Nested links are optional.
-        }
-      }
-      if (!mounted) return;
+      if (!mounted || request != _request) return;
       setState(() {
         _row = row;
-        _keys = keys;
+        _keys = row != null && widget.depth < maxReferenceDepth
+            ? row.foreignKeys
+            : const [];
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || request != _request) return;
       setState(() {
         _error = '$e';
         _loading = false;
@@ -216,7 +233,7 @@ class _ReferencePanelState extends State<ReferencePanel> {
             padding: const EdgeInsets.only(left: 8),
             child: Row(
               children: [
-                Flexible(
+                Expanded(
                   child: Text.rich(
                     TextSpan(
                       children: [
@@ -234,7 +251,6 @@ class _ReferencePanelState extends State<ReferencePanel> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Spacer(),
                 if (row != null)
                   CopyButton(
                     tooltip: 'Copy as JSON',
@@ -258,95 +274,102 @@ class _ReferencePanelState extends State<ReferencePanel> {
     final colors = ViewerColors.of(context);
     final column = row.columns[i];
     final value = row.values[i];
-    final nested = value == null ? null : foreignKeyAt(_keys, column.name);
-    final nestedValues = nested == null
-        ? null
-        : keyValues(nested, row.columns, row.values);
-    final canExpand =
-        nestedValues != null && nestedValues.every((v) => v != null);
-    final expanded = canExpand && _expanded.contains(nested);
+    final references = <(ForeignKey, List<Object?>)>[
+      if (value != null)
+        for (final key in foreignKeysAt(_keys, column.name))
+          if (keyValues(key, row.columns, row.values) case final values?
+              when values.every((v) => v != null))
+            (key, values),
+    ];
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Narrow nested panels give the label less room, not the value.
+          final labelWidth = math.min(120.0, constraints.maxWidth * 0.35);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: 120,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          column.name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12, color: colors.muted),
-                        ),
-                      ),
-                      if (column.isPrimaryKey) ...[
-                        const SizedBox(width: 4),
-                        Icon(Icons.key, size: 11, color: colors.muted),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: value == null
-                    ? Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          'NULL',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.nullValue,
-                            fontStyle: FontStyle.italic,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: labelWidth,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              column.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.muted,
+                              ),
+                            ),
                           ),
-                        ),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: SelectableText(
-                          cellText(value),
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                          if (column.isPrimaryKey) ...[
+                            const SizedBox(width: 4),
+                            Icon(Icons.key, size: 11, color: colors.muted),
+                          ],
+                        ],
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: value == null
+                          ? Text(
+                              'NULL',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.nullValue,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            )
+                          : SelectableText(
+                              cellText(value),
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                    ),
+                  ),
+                  if (value != null)
+                    SizedBox(
+                      height: 20,
+                      child: CopyButton(
+                        text: () => copyText(value),
+                        tooltip: 'Copy value',
+                        size: 12,
+                      ),
+                    ),
+                ],
               ),
-              if (value != null)
-                SizedBox(
-                  height: 20,
-                  child: CopyButton(
-                    text: () => copyText(value),
-                    tooltip: 'Copy value',
-                    size: 12,
+              for (final (key, values) in references) ...[
+                Padding(
+                  padding: EdgeInsets.only(left: labelWidth + 4),
+                  child: ReferenceToggle(
+                    foreignKey: key,
+                    expanded: _expanded.contains(key),
+                    onToggle: () => setState(() {
+                      if (!_expanded.remove(key)) _expanded.add(key);
+                    }),
                   ),
                 ),
+                if (_expanded.contains(key))
+                  ReferencePanel(
+                    source: widget.source,
+                    foreignKey: key,
+                    values: values,
+                    depth: widget.depth + 1,
+                  ),
+              ],
             ],
-          ),
-          if (nested != null && canExpand)
-            Padding(
-              padding: const EdgeInsets.only(left: 124),
-              child: ReferenceToggle(
-                foreignKey: nested,
-                expanded: expanded,
-                onToggle: () => setState(() {
-                  if (!_expanded.remove(nested)) _expanded.add(nested);
-                }),
-              ),
-            ),
-          if (expanded && nested != null)
-            ReferencePanel(
-              source: widget.source,
-              foreignKey: nested,
-              values: nestedValues,
-              depth: widget.depth + 1,
-            ),
-        ],
+          );
+        },
       ),
     );
   }

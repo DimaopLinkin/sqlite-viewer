@@ -211,27 +211,32 @@ class _Fields extends StatelessWidget {
   final ValueChanged<ForeignKey> onToggle;
 
   Widget? _reference(ColumnInfo column) {
-    final key = foreignKeyAt(controller.foreignKeys, column.name);
-    if (key == null) return null;
-    final values = keyValues(key, columns, row);
-    final canExpand = values != null && values.every((v) => v != null);
-    final open = canExpand && expanded.contains(key);
+    final keys = foreignKeysAt(controller.foreignKeys, column.name);
+    if (keys.isEmpty) return null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ReferenceToggle(
-          foreignKey: key,
-          expanded: open,
-          onToggle: canExpand ? () => onToggle(key) : null,
-        ),
-        if (open)
-          ReferencePanel(
-            source: controller.source,
-            foreignKey: key,
-            values: values,
-          ),
-      ],
+      children: [for (final key in keys) ..._referenceOf(key)],
     );
+  }
+
+  /// Toggle, and the parent row when expanded. A NULL in the key disables it.
+  List<Widget> _referenceOf(ForeignKey key) {
+    final values = keyValues(key, columns, row);
+    final usable = values != null && values.every((v) => v != null);
+    final open = usable && expanded.contains(key);
+    return [
+      ReferenceToggle(
+        foreignKey: key,
+        expanded: open,
+        onToggle: usable ? () => onToggle(key) : null,
+      ),
+      if (open)
+        ReferencePanel(
+          source: controller.source,
+          foreignKey: key,
+          values: values,
+        ),
+    ];
   }
 
   @override

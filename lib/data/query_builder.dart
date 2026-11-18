@@ -66,7 +66,11 @@ abstract final class QueryBuilder {
     required List<String> columns,
     required List<Object?> values,
   }) {
-    assert(columns.length == values.length && columns.isNotEmpty);
+    if (columns.isEmpty || columns.length != values.length) {
+      throw ArgumentError(
+        'Need one value per column, got $values for $columns',
+      );
+    }
     final list = select.isEmpty ? '*' : select.map(quoteIdentifier).join(', ');
     final where = [for (final c in columns) '${quoteIdentifier(c)} = ?'];
     return SqlStatement(
