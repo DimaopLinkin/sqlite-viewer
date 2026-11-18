@@ -33,6 +33,15 @@ class _SlowCountSource implements DbSource {
   ];
 
   @override
+  Future<List<ForeignKey>> foreignKeys(String table) async => const [];
+
+  @override
+  Future<ReferencedRow?> referencedRow(
+    ForeignKey key,
+    List<Object?> values,
+  ) async => null;
+
+  @override
   Future<int> count(TableQuery query) {
     final c = Completer<int>();
     counts.add(c);

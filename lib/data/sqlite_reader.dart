@@ -70,6 +70,64 @@ class SqliteReader {
     ];
   }
 
+  /// Foreign keys of [table]. Keys whose parent table or columns cannot be
+  /// resolved are left out.
+  List<ForeignKey> foreignKeys(String table) {
+    final result = db.select(
+      'SELECT id, seq, "table", "from", "to" '
+      'FROM pragma_foreign_key_list(?) ORDER BY id, seq',
+      [table],
+    );
+    final grouped = <int, List<Row>>{};
+    for (final row in result) {
+      (grouped[row['id'] as int] ??= []).add(row);
+    }
+    final keys = <ForeignKey>[];
+    for (final rows in grouped.values) {
+      final parent = rows.first['table'] as String;
+      final from = [for (final r in rows) r['from'] as String];
+      var to = [for (final r in rows) r['to'] as String?];
+      if (to.any((c) => c == null)) {
+        final primaryKey = columns(parent).where((c) => c.isPrimaryKey).toList()
+          ..sort((a, b) => a.primaryKeyIndex.compareTo(b.primaryKeyIndex));
+        if (primaryKey.length != from.length) continue;
+        to = [for (final c in primaryKey) c.name];
+      }
+      keys.add(ForeignKey(table: parent, from: from, to: to.cast<String>()));
+    }
+    return keys;
+  }
+
+  /// The parent row [key] points to for the child [values] (one per
+  /// [ForeignKey.from] column), or `null` if there is none.
+  /// [ReferencedRow.foreignKeys] holds the parent table's own keys.
+  ReferencedRow? referencedRow(ForeignKey key, List<Object?> values) {
+    if (values.length != key.to.length) {
+      throw ArgumentError.value(
+        values,
+        'values',
+        'Expected ${key.to.length} values for $key',
+      );
+    }
+    if (values.any((v) => v == null)) return null;
+    final parentColumns = columns(key.table);
+    if (parentColumns.isEmpty) return null;
+    final statement = QueryBuilder.lookup(
+      key.table,
+      select: [for (final c in parentColumns) c.name],
+      columns: key.to,
+      values: values,
+    );
+    final result = db.select(statement.sql, statement.args);
+    if (result.isEmpty) return null;
+    return ReferencedRow(
+      table: key.table,
+      columns: parentColumns,
+      values: result.rows.first,
+      foreignKeys: foreignKeys(key.table),
+    );
+  }
+
   int count(TableQuery query) {
     final statement = QueryBuilder.count(query);
     final result = db.select(statement.sql, statement.args);

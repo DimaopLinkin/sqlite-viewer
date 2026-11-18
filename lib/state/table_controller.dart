@@ -31,6 +31,11 @@ class TableController extends ChangeNotifier {
   List<ColumnInfo> get columns => _columns;
   List<String> get columnNames => [for (final c in _columns) c.name];
 
+  List<ForeignKey> _foreignKeys = const [];
+
+  /// Foreign keys of the table, empty for views and tables without any.
+  List<ForeignKey> get foreignKeys => _foreignKeys;
+
   final Map<String, ColumnFilter> _filters = {};
 
   /// Current filter of [column], active or not.
@@ -93,8 +98,12 @@ class TableController extends ChangeNotifier {
 
   Future<void> _loadColumns() async {
     try {
+      // Loaded side by side; _loadForeignKeys never throws.
+      final pendingKeys = _loadForeignKeys();
       final columns = await source.columns(table.name);
+      final foreignKeys = await pendingKeys;
       if (_disposed) return;
+      _foreignKeys = foreignKeys;
       if (columns.length != _columns.length) _page = null;
       _columns = columns;
       final names = {for (final c in columns) c.name};
@@ -110,6 +119,17 @@ class TableController extends ChangeNotifier {
       _loading = false;
       _error = '$e';
       notifyListeners();
+    }
+  }
+
+  /// Foreign keys only add links to the row dialog, so failing to read them
+  /// must not break the table.
+  Future<List<ForeignKey>> _loadForeignKeys() async {
+    if (table.kind != TableKind.table) return const [];
+    try {
+      return await source.foreignKeys(table.name);
+    } catch (_) {
+      return const [];
     }
   }
 

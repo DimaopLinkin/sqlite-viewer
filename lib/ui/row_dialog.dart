@@ -5,6 +5,7 @@ import '../data/models.dart';
 import '../state/table_controller.dart';
 import 'copy_button.dart';
 import 'format.dart';
+import 'reference_panel.dart';
 import 'theme.dart';
 
 /// Opens the detail dialog for the row at absolute [index].
@@ -40,6 +41,10 @@ class _RowDialogState extends State<RowDialog> {
   List<Object?>? _row;
   String? _error;
   int _request = 0;
+
+  /// Foreign keys whose parent row is shown. Kept while stepping through
+  /// rows, so an opened reference stays open on the next row.
+  final Set<ForeignKey> _expanded = {};
 
   @override
   void initState() {
@@ -173,6 +178,11 @@ class _RowDialogState extends State<RowDialog> {
                     : _Fields(
                         columns: columns,
                         row: row,
+                        controller: widget.controller,
+                        expanded: _expanded,
+                        onToggle: (key) => setState(() {
+                          if (!_expanded.remove(key)) _expanded.add(key);
+                        }),
                         key: ValueKey(_index),
                       ),
               ),
@@ -185,10 +195,49 @@ class _RowDialogState extends State<RowDialog> {
 }
 
 class _Fields extends StatelessWidget {
-  const _Fields({super.key, required this.columns, required this.row});
+  const _Fields({
+    super.key,
+    required this.columns,
+    required this.row,
+    required this.controller,
+    required this.expanded,
+    required this.onToggle,
+  });
 
   final List<ColumnInfo> columns;
   final List<Object?> row;
+  final TableController controller;
+  final Set<ForeignKey> expanded;
+  final ValueChanged<ForeignKey> onToggle;
+
+  Widget? _reference(ColumnInfo column) {
+    final keys = foreignKeysAt(controller.foreignKeys, column.name);
+    if (keys.isEmpty) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (final key in keys) ..._referenceOf(key)],
+    );
+  }
+
+  /// Toggle, and the parent row when expanded. A NULL in the key disables it.
+  List<Widget> _referenceOf(ForeignKey key) {
+    final values = keyValues(key, columns, row);
+    final usable = values != null && values.every((v) => v != null);
+    final open = usable && expanded.contains(key);
+    return [
+      ReferenceToggle(
+        foreignKey: key,
+        expanded: open,
+        onToggle: usable ? () => onToggle(key) : null,
+      ),
+      if (open)
+        ReferencePanel(
+          source: controller.source,
+          foreignKey: key,
+          values: values,
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +255,11 @@ class _Fields extends StatelessWidget {
               for (var i = 0; i < columns.length && i < row.length; i++)
                 SizedBox(
                   width: width,
-                  child: _Field(column: columns[i], value: row[i]),
+                  child: _Field(
+                    column: columns[i],
+                    value: row[i],
+                    reference: _reference(columns[i]),
+                  ),
                 ),
             ],
           ),
@@ -217,10 +270,13 @@ class _Fields extends StatelessWidget {
 }
 
 class _Field extends StatefulWidget {
-  const _Field({required this.column, required this.value});
+  const _Field({required this.column, required this.value, this.reference});
 
   final ColumnInfo column;
   final Object? value;
+
+  /// Link to the row a foreign key value points to.
+  final Widget? reference;
 
   @override
   State<_Field> createState() => _FieldState();
@@ -321,6 +377,10 @@ class _FieldState extends State<_Field> {
             ),
           ],
         ),
+        if (widget.reference case final reference?) ...[
+          const SizedBox(height: 2),
+          reference,
+        ],
       ],
     );
   }

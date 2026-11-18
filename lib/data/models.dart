@@ -221,3 +221,55 @@ class SqlScriptError {
   /// Character offset of the error in the script, when SQLite reports one.
   final int? offset;
 }
+
+/// A foreign key of a table, from `PRAGMA foreign_key_list`.
+///
+/// [to] always names the parent columns: a key declared as
+/// `REFERENCES parent` without columns is resolved to the parent's primary
+/// key by the reader.
+@immutable
+class ForeignKey {
+  const ForeignKey({required this.table, required this.from, required this.to});
+
+  /// The referenced (parent) table.
+  final String table;
+
+  /// Child columns, in key order.
+  final List<String> from;
+
+  /// Parent columns matching [from] one by one, same length.
+  final List<String> to;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ForeignKey &&
+      other.table == table &&
+      listEquals(other.from, from) &&
+      listEquals(other.to, to);
+
+  @override
+  int get hashCode =>
+      Object.hash(table, Object.hashAll(from), Object.hashAll(to));
+
+  @override
+  String toString() => '(${from.join(', ')}) → $table(${to.join(', ')})';
+}
+
+/// The parent row a foreign key value points to.
+@immutable
+class ReferencedRow {
+  const ReferencedRow({
+    required this.table,
+    required this.columns,
+    required this.values,
+    this.foreignKeys = const [],
+  });
+
+  final String table;
+  final List<ColumnInfo> columns;
+  final List<Object?> values;
+
+  /// Foreign keys of [table], so the row's own references can be followed
+  /// without another round-trip.
+  final List<ForeignKey> foreignKeys;
+}
