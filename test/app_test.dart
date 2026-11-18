@@ -8,13 +8,14 @@ import 'package:sqlite_viewer/main.dart';
 
 /// Runs the real reader on an in-memory database, on the test isolate.
 class _MemorySource implements DbSource {
-  _MemorySource(this._db) : _reader = SqliteReader(_db);
+  _MemorySource(this._db, {this.name = 'memory.sqlite'})
+    : _reader = SqliteReader(_db);
 
   final Database _db;
   final SqliteReader _reader;
 
   @override
-  String get name => 'memory.sqlite';
+  final String name;
 
   @override
   String? get notice => null;
@@ -59,6 +60,15 @@ DbSource _sampleSource() {
   }
   insert.close();
   return _MemorySource(db);
+}
+
+DbSource _otherSource() {
+  final db = sqlite3.openInMemory()
+    ..execute('''
+      CREATE TABLE city (id INTEGER PRIMARY KEY, title TEXT);
+      INSERT INTO city VALUES (1, 'Lisbon'), (2, 'Porto');
+    ''');
+  return _MemorySource(db, name: 'other.db');
 }
 
 void main() {
@@ -153,5 +163,49 @@ void main() {
       find.descendant(of: find.byType(Dialog), matching: find.text('uuid-3')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('opens several files in tabs and keeps each tab state', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final sources = [_sampleSource, _otherSource];
+    var opened = 0;
+    await tester.pumpWidget(
+      SqliteViewerApp(picker: () async => sources[opened++]()),
+    );
+    await tester.tap(find.text('Open file…'));
+    await tester.pumpAndSettle();
+
+    // Move the first file to page 2, then open a second file.
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    expect(find.text('Page 2 / 3'), findsOneWidget);
+
+    await tester.tap(find.text('Open file'));
+    await tester.pumpAndSettle();
+    expect(find.text('memory.sqlite'), findsOneWidget);
+    expect(find.text('other.db'), findsOneWidget);
+    expect(find.text('Lisbon'), findsOneWidget);
+    expect(find.text('uuid-101'), findsNothing);
+
+    // Back to the first tab: its page is kept.
+    await tester.tap(find.text('memory.sqlite'));
+    await tester.pumpAndSettle();
+    expect(find.text('uuid-101'), findsOneWidget);
+    expect(find.text('Page 2 / 3'), findsOneWidget);
+    expect(find.text('Lisbon'), findsNothing);
+
+    // Closing the active first tab shows the remaining one.
+    await tester.tap(find.byTooltip('Close tab').first);
+    await tester.pumpAndSettle();
+    expect(find.text('memory.sqlite'), findsNothing);
+    expect(find.text('Lisbon'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close tab').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Open file…'), findsOneWidget);
   });
 }

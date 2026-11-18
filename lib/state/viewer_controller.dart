@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../data/db_source.dart';
 import '../data/models.dart';
 
-/// App-level state: the opened file, its tables and the selected table.
+/// State of one open file (one tab): its tables and the selected table.
 class ViewerController extends ChangeNotifier {
   DbSource? _source;
   DbSource? get source => _source;
@@ -125,21 +125,10 @@ class ViewerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> closeFile() async {
-    ++_generation;
-    _busy = false;
-    final source = _source;
-    _source = null;
-    _tables = const [];
-    _rowCounts = const {};
-    _selected = null;
-    _error = null;
-    notifyListeners();
-    await source?.close();
-  }
-
   @override
   void dispose() {
+    // Drops late results (counts, reload) that would notify after dispose.
+    ++_generation;
     _source?.close();
     super.dispose();
   }

@@ -1,9 +1,11 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../data/db_opener.dart';
 import '../data/db_source.dart';
 import '../state/viewer_controller.dart';
+import '../state/workspace_controller.dart';
 import 'sidebar.dart';
 import 'table_viewer.dart';
 import 'theme.dart';
@@ -34,119 +36,89 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _viewer = ViewerController();
+  final _workspace = WorkspaceController();
   double _sidebarWidth = 280;
 
   @override
   void dispose() {
-    _viewer.dispose();
+    _workspace.dispose();
     super.dispose();
   }
 
-  Future<void> _open() => _viewer.openWith(widget.picker);
+  Future<void> _open() => _workspace.openWith(widget.picker);
+
+  void _resizeSidebar(double delta) => setState(() {
+    final max = MediaQuery.sizeOf(context).width * 0.6;
+    _sidebarWidth = (_sidebarWidth + delta).clamp(
+      180.0,
+      max < 180 ? 180.0 : max,
+    );
+  });
 
   @override
   Widget build(BuildContext context) {
-    final colors = ViewerColors.of(context);
     return Scaffold(
       body: ListenableBuilder(
-        listenable: _viewer,
+        listenable: _workspace,
         builder: (context, _) {
-          final source = _viewer.source;
-          final selected = _viewer.selected;
+          final tabs = _workspace.tabs;
+          final active = _workspace.active;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _TopBar(
-                fileName: source?.name,
-                busy: _viewer.busy,
-                themeMode: widget.themeMode,
-                onOpen: _open,
-                onReload: source == null || _viewer.busy
-                    ? null
-                    : _viewer.reload,
-                onClose: source == null ? null : _viewer.closeFile,
-                onToggleTheme: widget.onToggleTheme,
-              ),
-              if (source?.notice case final notice?)
-                Container(
-                  color: colors.toolbar,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 16, color: colors.muted),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          notice,
-                          style: TextStyle(fontSize: 12, color: colors.muted),
-                        ),
-                      ),
-                    ],
-                  ),
+              // Rebuilds with the active tab so reload/busy state stay live.
+              ListenableBuilder(
+                listenable: Listenable.merge([?active]),
+                builder: (context, _) => _TopBar(
+                  busy: _workspace.opening || (active?.busy ?? false),
+                  themeMode: widget.themeMode,
+                  onOpen: _workspace.opening ? null : _open,
+                  onReload: active == null || active.busy
+                      ? null
+                      : active.reload,
+                  onClose: active == null
+                      ? null
+                      : () => _workspace.closeTab(_workspace.activeIndex),
+                  onToggleTheme: widget.onToggleTheme,
                 ),
-              if (_viewer.error != null)
+              ),
+              if (tabs.isNotEmpty)
+                _TabBar(
+                  tabs: tabs,
+                  activeIndex: _workspace.activeIndex,
+                  onSelect: _workspace.activate,
+                  onClose: _workspace.closeTab,
+                ),
+              if (_workspace.error case final error?)
                 MaterialBanner(
                   leading: const Icon(Icons.error_outline),
-                  content: SelectableText(_viewer.error!),
+                  content: SelectableText(error),
                   actions: [
                     TextButton(
-                      onPressed: _viewer.dismissError,
+                      onPressed: _workspace.dismissError,
                       child: const Text('Dismiss'),
                     ),
                   ],
                 ),
               Expanded(
-                child: source == null
-                    ? _EmptyState(onOpen: _open, busy: _viewer.busy)
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                child: tabs.isEmpty
+                    ? _EmptyState(onOpen: _open, busy: _workspace.opening)
+                    // Keeps every tab alive so filters, sort, page and scroll
+                    // survive switching between files.
+                    : IndexedStack(
+                        index: _workspace.activeIndex,
+                        sizing: StackFit.expand,
                         children: [
-                          SizedBox(
-                            width: _sidebarWidth,
-                            child: Sidebar(controller: _viewer),
-                          ),
-                          MouseRegion(
-                            cursor: SystemMouseCursors.resizeColumn,
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onHorizontalDragUpdate: (d) => setState(() {
-                                final max =
-                                    MediaQuery.sizeOf(context).width * 0.6;
-                                _sidebarWidth = (_sidebarWidth + d.delta.dx)
-                                    .clamp(180.0, max < 180 ? 180.0 : max);
-                              }),
-                              child: Container(
-                                width: 4,
-                                color: colors.sidebar,
-                                child: VerticalDivider(
-                                  width: 1,
-                                  color: colors.gridLine,
-                                ),
+                          for (final (i, tab) in tabs.indexed)
+                            TickerMode(
+                              key: ObjectKey(tab),
+                              enabled: i == _workspace.activeIndex,
+                              child: _DbTab(
+                                viewer: tab,
+                                sidebarWidth: _sidebarWidth,
+                                onResizeSidebar: _resizeSidebar,
                               ),
                             ),
-                          ),
-                          Expanded(
-                            child: selected == null
-                                ? Center(
-                                    child: Text(
-                                      'The database has no tables',
-                                      style: TextStyle(color: colors.muted),
-                                    ),
-                                  )
-                                : TableViewer(
-                                    key: ValueKey((
-                                      source,
-                                      selected,
-                                      _viewer.schemaVersion,
-                                    )),
-                                    source: source,
-                                    table: selected,
-                                  ),
-                          ),
                         ],
                       ),
               ),
@@ -158,9 +130,237 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+/// Contents of one tab: notice, errors, sidebar and the selected table.
+class _DbTab extends StatelessWidget {
+  const _DbTab({
+    required this.viewer,
+    required this.sidebarWidth,
+    required this.onResizeSidebar,
+  });
+
+  final ViewerController viewer;
+  final double sidebarWidth;
+  final ValueChanged<double> onResizeSidebar;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ViewerColors.of(context);
+    return ListenableBuilder(
+      listenable: viewer,
+      builder: (context, _) {
+        final source = viewer.source;
+        final selected = viewer.selected;
+        if (source == null) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (source.notice case final notice?)
+              Container(
+                color: colors.toolbar,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: colors.muted),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        notice,
+                        style: TextStyle(fontSize: 12, color: colors.muted),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (viewer.error case final error?)
+              MaterialBanner(
+                leading: const Icon(Icons.error_outline),
+                content: SelectableText(error),
+                actions: [
+                  TextButton(
+                    onPressed: viewer.dismissError,
+                    child: const Text('Dismiss'),
+                  ),
+                ],
+              ),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: sidebarWidth,
+                    child: Sidebar(controller: viewer),
+                  ),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.resizeColumn,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragUpdate: (d) =>
+                          onResizeSidebar(d.delta.dx),
+                      child: Container(
+                        width: 4,
+                        color: colors.sidebar,
+                        child: VerticalDivider(
+                          width: 1,
+                          color: colors.gridLine,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: selected == null
+                        ? Center(
+                            child: Text(
+                              'The database has no tables',
+                              style: TextStyle(color: colors.muted),
+                            ),
+                          )
+                        : TableViewer(
+                            key: ValueKey((
+                              source,
+                              selected,
+                              viewer.schemaVersion,
+                            )),
+                            source: source,
+                            table: selected,
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// One tab per open file, scrollable when they do not fit.
+class _TabBar extends StatelessWidget {
+  const _TabBar({
+    required this.tabs,
+    required this.activeIndex,
+    required this.onSelect,
+    required this.onClose,
+  });
+
+  final List<ViewerController> tabs;
+  final int activeIndex;
+  final ValueChanged<int> onSelect;
+  final ValueChanged<int> onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ViewerColors.of(context);
+    return Container(
+      height: 34,
+      decoration: BoxDecoration(
+        color: colors.sidebar,
+        border: Border(bottom: BorderSide(color: colors.gridLine)),
+      ),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          for (final (i, tab) in tabs.indexed)
+            _FileTab(
+              key: ObjectKey(tab),
+              name: tab.source?.name ?? '',
+              active: i == activeIndex,
+              onSelect: () => onSelect(i),
+              onClose: () => onClose(i),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FileTab extends StatelessWidget {
+  const _FileTab({
+    super.key,
+    required this.name,
+    required this.active,
+    required this.onSelect,
+    required this.onClose,
+  });
+
+  final String name;
+  final bool active;
+  final VoidCallback onSelect;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ViewerColors.of(context);
+    final primary = Theme.of(context).colorScheme.primary;
+    return Listener(
+      // Middle click closes the tab, as in browsers and editors.
+      onPointerDown: (e) {
+        if (e.buttons == kMiddleMouseButton) onClose();
+      },
+      child: Tooltip(
+        message: name,
+        waitDuration: const Duration(milliseconds: 600),
+        child: InkWell(
+          onTap: onSelect,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 240),
+            padding: const EdgeInsets.only(left: 12, right: 4),
+            decoration: BoxDecoration(
+              color: active ? colors.toolbar : null,
+              border: Border(
+                top: BorderSide(
+                  color: active ? primary : Colors.transparent,
+                  width: 2,
+                ),
+                right: BorderSide(color: colors.gridLine),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.description_outlined,
+                  size: 15,
+                  color: active ? primary : colors.muted,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: active ? null : colors.muted,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                IconButton(
+                  tooltip: 'Close tab',
+                  iconSize: 14,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 24,
+                    height: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _TopBar extends StatelessWidget {
   const _TopBar({
-    required this.fileName,
     required this.busy,
     required this.themeMode,
     required this.onOpen,
@@ -169,10 +369,9 @@ class _TopBar extends StatelessWidget {
     required this.onToggleTheme,
   });
 
-  final String? fileName;
   final bool busy;
   final ThemeMode themeMode;
-  final VoidCallback onOpen;
+  final VoidCallback? onOpen;
   final VoidCallback? onReload;
   final VoidCallback? onClose;
   final VoidCallback onToggleTheme;
@@ -202,7 +401,7 @@ class _TopBar extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           FilledButton.tonalIcon(
-            onPressed: busy ? null : onOpen,
+            onPressed: onOpen,
             icon: const Icon(Icons.folder_open, size: 16),
             label: const Text('Open file'),
           ),
@@ -212,27 +411,7 @@ class _TopBar extends StatelessWidget {
               dimension: 14,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-          Expanded(
-            child: Row(
-              children: [
-                if (fileName != null) ...[
-                  Icon(
-                    Icons.description_outlined,
-                    size: 16,
-                    color: colors.muted,
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      fileName!,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colors.muted),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+          const Spacer(),
           if (onReload != null)
             IconButton(
               tooltip: 'Reload schema',
@@ -242,7 +421,7 @@ class _TopBar extends StatelessWidget {
             ),
           if (onClose != null)
             IconButton(
-              tooltip: 'Close file',
+              tooltip: 'Close tab',
               iconSize: 18,
               onPressed: onClose,
               icon: const Icon(Icons.close),
