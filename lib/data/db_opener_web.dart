@@ -81,6 +81,16 @@ class WebDbSource implements DbSource {
       _reader.columns(table);
 
   @override
+  Future<List<ForeignKey>> foreignKeys(String table) async =>
+      _reader.foreignKeys(table);
+
+  @override
+  Future<ReferencedRow?> referencedRow(
+    ForeignKey key,
+    List<Object?> values,
+  ) async => _reader.referencedRow(key, values);
+
+  @override
   Future<int> count(TableQuery query) async => _reader.count(query);
 
   @override

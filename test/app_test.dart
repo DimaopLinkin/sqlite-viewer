@@ -32,6 +32,16 @@ class _MemorySource implements DbSource {
       _reader.columns(table);
 
   @override
+  Future<List<ForeignKey>> foreignKeys(String table) async =>
+      _reader.foreignKeys(table);
+
+  @override
+  Future<ReferencedRow?> referencedRow(
+    ForeignKey key,
+    List<Object?> values,
+  ) async => _reader.referencedRow(key, values);
+
+  @override
   Future<int> count(TableQuery query) async => _reader.count(query);
 
   @override
@@ -50,13 +60,22 @@ class _MemorySource implements DbSource {
 DbSource _sampleSource() {
   final db = sqlite3.openInMemory()
     ..execute('''
-      CREATE TABLE employee (local_id TEXT PRIMARY KEY, server_id INTEGER, note TEXT);
-      CREATE TABLE general_agency (id INTEGER PRIMARY KEY, title TEXT);
-      CREATE TABLE general_category (id INTEGER PRIMARY KEY);
+      CREATE TABLE employee (local_id TEXT PRIMARY KEY, server_id INTEGER, note TEXT,
+        agency_id INTEGER REFERENCES general_agency(id));
+      CREATE TABLE general_agency (id INTEGER PRIMARY KEY, title TEXT,
+        category_id INTEGER REFERENCES general_category);
+      CREATE TABLE general_category (id INTEGER PRIMARY KEY, label TEXT);
+      INSERT INTO general_category VALUES (7, 'Retail');
+      INSERT INTO general_agency VALUES (1, 'Agency one', 7), (2, 'Agency two', NULL);
     ''');
-  final insert = db.prepare('INSERT INTO employee VALUES (?, ?, ?)');
+  final insert = db.prepare('INSERT INTO employee VALUES (?, ?, ?, ?)');
   for (var i = 1; i <= 230; i++) {
-    insert.execute(['uuid-$i', 1000 + i, i == 2 ? null : 'note $i']);
+    insert.execute([
+      'uuid-$i',
+      1000 + i,
+      i == 2 ? null : 'note $i',
+      i == 1 ? null : (i.isEven ? 1 : 2),
+    ]);
   }
   insert.close();
   return _MemorySource(db);
@@ -72,8 +91,11 @@ DbSource _otherSource() {
 }
 
 void main() {
-  Future<void> openApp(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1600, 1000);
+  Future<void> openApp(
+    WidgetTester tester, {
+    Size size = const Size(1600, 1000),
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
@@ -94,7 +116,7 @@ void main() {
     expect(find.text('Rows: 230'), findsOneWidget);
     expect(find.text('uuid-1'), findsOneWidget);
     expect(find.text('Page 1 / 3'), findsOneWidget);
-    expect(find.text('NULL'), findsOneWidget);
+    expect(find.text('NULL'), findsNWidgets(2));
   });
 
   testWidgets('filters the table list by name', (tester) async {
@@ -153,7 +175,7 @@ void main() {
           ),
         )
         .toList();
-    expect(values.map((f) => f.controller!.text), ['uuid-2', '1002', '']);
+    expect(values.map((f) => f.controller!.text), ['uuid-2', '1002', '', '1']);
     expect(values.every((f) => f.readOnly), isTrue);
 
     await tester.tap(find.byTooltip('Next row (Alt+↓)'));
@@ -163,6 +185,55 @@ void main() {
       find.descendant(of: find.byType(Dialog), matching: find.text('uuid-3')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('row dialog expands referenced rows', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('uuid-2'));
+    await tester.pumpAndSettle();
+
+    final toggle = find.text('general_agency (id)');
+    expect(toggle, findsOneWidget);
+    expect(find.text('Agency one'), findsNothing);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('Agency one'), findsOneWidget);
+
+    // The parent's own key can be followed too.
+    await tester.tap(find.text('general_category (id)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retail'), findsOneWidget);
+
+    // Stays open on the next row, showing that row's parent.
+    await tester.tap(find.byTooltip('Next row (Alt+↓)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Agency two'), findsOneWidget);
+    expect(find.text('Agency one'), findsNothing);
+    expect(find.text('general_category (id)'), findsNothing); // NULL
+
+    // A NULL reference cannot be expanded.
+    await tester.tap(find.byTooltip('Previous row (Alt+↑)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Previous row (Alt+↑)'));
+    await tester.pumpAndSettle();
+    expect(find.text('employee  /  1', findRichText: true), findsOneWidget);
+    expect(find.text('Agency one'), findsNothing);
+    expect(find.text('Agency two'), findsNothing);
+  });
+
+  testWidgets('nested references fit a narrow dialog', (tester) async {
+    await openApp(tester, size: const Size(700, 900));
+    // The main window is laid out for wider screens; only the dialog is
+    // checked here. Flutter reports an overflow once per render object.
+    tester.takeException();
+    await tester.tap(find.text('uuid-2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('general_agency (id)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('general_category (id)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retail'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('opens several files in tabs and keeps each tab state', (

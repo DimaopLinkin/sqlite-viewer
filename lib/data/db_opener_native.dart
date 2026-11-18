@@ -99,6 +99,14 @@ class NativeDbSource implements DbSource {
       _run((r) => r.columns(table));
 
   @override
+  Future<List<ForeignKey>> foreignKeys(String table) =>
+      _run((r) => r.foreignKeys(table));
+
+  @override
+  Future<ReferencedRow?> referencedRow(ForeignKey key, List<Object?> values) =>
+      _run((r) => r.referencedRow(key, values));
+
+  @override
   Future<int> count(TableQuery query) => _run((r) => r.count(query));
 
   @override

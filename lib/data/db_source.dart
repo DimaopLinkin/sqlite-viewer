@@ -18,6 +18,11 @@ abstract interface class DbSource {
 
   Future<List<ColumnInfo>> columns(String table);
 
+  Future<List<ForeignKey>> foreignKeys(String table);
+
+  /// The parent row [key] points to for the child [values], or `null`.
+  Future<ReferencedRow?> referencedRow(ForeignKey key, List<Object?> values);
+
   Future<int> count(TableQuery query);
 
   Future<RowPage> page(

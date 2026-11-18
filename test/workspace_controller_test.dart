@@ -24,6 +24,15 @@ class _FakeSource implements DbSource {
   Future<List<ColumnInfo>> columns(String table) async => const [];
 
   @override
+  Future<List<ForeignKey>> foreignKeys(String table) async => const [];
+
+  @override
+  Future<ReferencedRow?> referencedRow(
+    ForeignKey key,
+    List<Object?> values,
+  ) async => null;
+
+  @override
   Future<int> count(TableQuery query) async => 0;
 
   @override
