@@ -1,5 +1,4 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../data/db_opener.dart';
@@ -68,7 +67,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               // Rebuilds with the active tab so reload/busy state stay live.
               ListenableBuilder(
-                listenable: Listenable.merge([?active]),
+                listenable: active ?? _workspace,
                 builder: (context, _) => _TopBar(
                   busy: _workspace.opening || (active?.busy ?? false),
                   themeMode: widget.themeMode,
@@ -90,15 +89,9 @@ class _HomePageState extends State<HomePage> {
                   onClose: _workspace.closeTab,
                 ),
               if (_workspace.error case final error?)
-                MaterialBanner(
-                  leading: const Icon(Icons.error_outline),
-                  content: SelectableText(error),
-                  actions: [
-                    TextButton(
-                      onPressed: _workspace.dismissError,
-                      child: const Text('Dismiss'),
-                    ),
-                  ],
+                _ErrorBanner(
+                  message: error,
+                  onDismiss: _workspace.dismissError,
                 ),
               Expanded(
                 child: tabs.isEmpty
@@ -150,7 +143,6 @@ class _DbTab extends StatelessWidget {
       builder: (context, _) {
         final source = viewer.source;
         final selected = viewer.selected;
-        if (source == null) return const SizedBox.shrink();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -175,16 +167,7 @@ class _DbTab extends StatelessWidget {
                 ),
               ),
             if (viewer.error case final error?)
-              MaterialBanner(
-                leading: const Icon(Icons.error_outline),
-                content: SelectableText(error),
-                actions: [
-                  TextButton(
-                    onPressed: viewer.dismissError,
-                    child: const Text('Dismiss'),
-                  ),
-                ],
-              ),
+              _ErrorBanner(message: error, onDismiss: viewer.dismissError),
             Expanded(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -238,7 +221,7 @@ class _DbTab extends StatelessWidget {
 }
 
 /// One tab per open file, scrollable when they do not fit.
-class _TabBar extends StatelessWidget {
+class _TabBar extends StatefulWidget {
   const _TabBar({
     required this.tabs,
     required this.activeIndex,
@@ -252,6 +235,48 @@ class _TabBar extends StatelessWidget {
   final ValueChanged<int> onClose;
 
   @override
+  State<_TabBar> createState() => _TabBarState();
+}
+
+class _TabBarState extends State<_TabBar> {
+  final _keys = Expando<GlobalKey>();
+  ViewerController? _shown;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _revealActive();
+  }
+
+  @override
+  void didUpdateWidget(_TabBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _revealActive();
+  }
+
+  /// Scrolls a newly activated tab into view, e.g. one just opened at the
+  /// end of an overflowing strip.
+  void _revealActive() {
+    final active = widget.tabs[widget.activeIndex];
+    if (identical(active, _shown)) return;
+    _shown = active;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _keys[active]?.currentContext;
+      if (context == null || !context.mounted) return;
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 150),
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 150),
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = ViewerColors.of(context);
     return Container(
@@ -260,18 +285,22 @@ class _TabBar extends StatelessWidget {
         color: colors.sidebar,
         border: Border(bottom: BorderSide(color: colors.gridLine)),
       ),
-      child: ListView(
+      // A Row in a scroll view (not a lazy ListView) so the active tab is
+      // always built and can be scrolled to.
+      child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        children: [
-          for (final (i, tab) in tabs.indexed)
-            _FileTab(
-              key: ObjectKey(tab),
-              name: tab.source?.name ?? '',
-              active: i == activeIndex,
-              onSelect: () => onSelect(i),
-              onClose: () => onClose(i),
-            ),
-        ],
+        child: Row(
+          children: [
+            for (final (i, tab) in widget.tabs.indexed)
+              _FileTab(
+                key: _keys[tab] ??= GlobalKey(),
+                name: tab.source.name,
+                active: i == widget.activeIndex,
+                onSelect: () => widget.onSelect(i),
+                onClose: () => widget.onClose(i),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -295,11 +324,9 @@ class _FileTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = ViewerColors.of(context);
     final primary = Theme.of(context).colorScheme.primary;
-    return Listener(
+    return GestureDetector(
       // Middle click closes the tab, as in browsers and editors.
-      onPointerDown: (e) {
-        if (e.buttons == kMiddleMouseButton) onClose();
-      },
+      onTertiaryTapUp: (_) => onClose(),
       child: Tooltip(
         message: name,
         waitDuration: const Duration(milliseconds: 600),
@@ -474,4 +501,18 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => MaterialBanner(
+    leading: const Icon(Icons.error_outline),
+    content: SelectableText(message),
+    actions: [TextButton(onPressed: onDismiss, child: const Text('Dismiss'))],
+  );
 }

@@ -44,7 +44,7 @@ void main() {
   setUp(() => workspace = WorkspaceController());
   tearDown(() => workspace.dispose());
 
-  List<String?> names() => [for (final t in workspace.tabs) t.source?.name];
+  List<String> names() => [for (final t in workspace.tabs) t.source.name];
 
   Future<void> openAll(List<String> list) async {
     for (final n in list) {
@@ -57,7 +57,17 @@ void main() {
     expect(names(), ['a', 'b', 'c']);
     expect(workspace.activeIndex, 2);
     workspace.activate(0);
-    expect(workspace.active!.source!.name, 'a');
+    expect(workspace.active!.source.name, 'a');
+  });
+
+  test('reload marks the tab busy until the schema is read', () async {
+    await openAll(['a']);
+    final tab = workspace.active!;
+    final reload = tab.reload();
+    expect(tab.busy, isTrue);
+    await reload;
+    expect(tab.busy, isFalse);
+    expect(tab.schemaVersion, 1);
   });
 
   test('cancelled picker changes nothing', () async {
@@ -75,21 +85,25 @@ void main() {
     expect(workspace.error, contains('broken'));
   });
 
-  test('closing tabs keeps a sensible active tab and closes files', () async {
+  testWidgets('closing tabs keeps a sensible active tab and closes files', (
+    tester,
+  ) async {
     final sources = <_FakeSource>[];
     for (final n in ['a', 'b', 'c', 'd']) {
       await workspace.openWith(() async => sources.addAndReturn(n));
     }
     workspace.activate(2); // c
     workspace.closeTab(0); // a, left of active
-    expect(workspace.active!.source!.name, 'c');
+    expect(workspace.active!.source.name, 'c');
     workspace.closeTab(1); // c itself → the tab to its right
-    expect(workspace.active!.source!.name, 'd');
+    expect(workspace.active!.source.name, 'd');
     workspace.closeTab(1); // d, the last → the tab to its left
-    expect(workspace.active!.source!.name, 'b');
+    expect(workspace.active!.source.name, 'b');
     workspace.closeTab(0);
     expect(workspace.active, isNull);
-    await Future<void>.delayed(Duration.zero);
+    // Files close after the frame that removes their widgets.
+    expect(sources.any((s) => s.closed), isFalse);
+    await tester.pump();
     expect(sources.every((s) => s.closed), isTrue);
   });
 }

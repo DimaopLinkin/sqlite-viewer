@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../data/db_source.dart';
 import 'viewer_controller.dart';
@@ -33,17 +34,20 @@ class WorkspaceController extends ChangeNotifier {
     _opening = true;
     _error = null;
     notifyListeners();
-    final tab = ViewerController();
-    await tab.openWith(open);
+    ViewerController? tab;
+    String? error;
+    try {
+      tab = await ViewerController.openWith(open);
+    } catch (e) {
+      error = 'Could not open the file: $e';
+    }
     if (_disposed) {
-      tab.dispose();
+      tab?.dispose();
       return;
     }
     _opening = false;
-    if (tab.source == null) {
-      _error = tab.error;
-      tab.dispose();
-    } else {
+    _error = error;
+    if (tab != null) {
       _tabs.add(tab);
       _activeIndex = _tabs.length - 1;
     }
@@ -67,9 +71,11 @@ class WorkspaceController extends ChangeNotifier {
       _activeIndex--;
     }
     notifyListeners();
-    // Dispose after listeners rebuilt without the tab, so no widget is left
-    // listening to a disposed controller.
-    tab.dispose();
+    // The tab's widgets stay mounted until the next frame and may still
+    // query the source, so close it only after that frame.
+    SchedulerBinding.instance
+      ..addPostFrameCallback((_) => tab.dispose())
+      ..ensureVisualUpdate();
   }
 
   void dismissError() {
